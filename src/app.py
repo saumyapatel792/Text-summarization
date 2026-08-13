@@ -57,9 +57,20 @@ async def lifespan(app: FastAPI):
     
     # Try loading from MLflow Model Registry
     loaded_from_registry = False
-    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
-    
+    # Reachability check with a short timeout to prevent client blocking when MLflow is offline
+    mlflow_reachable = False
+    if MLFLOW_TRACKING_URI:
+        try:
+            import urllib.request
+            urllib.request.urlopen(MLFLOW_TRACKING_URI, timeout=1.5)
+            mlflow_reachable = True
+        except Exception:
+            pass
+
     try:
+        if not mlflow_reachable:
+            raise ConnectionError("MLflow tracking server is not reachable")
+        mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
         logger.info(f"Attempting to load best model '{MODEL_REGISTRY_NAME}' from MLflow registry at {MLFLOW_TRACKING_URI}...")
         # Get the latest version in the registry
         client = mlflow.tracking.MlflowClient()
