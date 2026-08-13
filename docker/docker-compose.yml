@@ -1,0 +1,66 @@
+version: '3.8'
+
+services:
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:latest
+    container_name: mlflow_server
+    ports:
+      - "5000:5000"
+    volumes:
+      - C:/mlflow:/mlflow
+    working_dir: /mlflow
+    command: mlflow server --host 0.0.0.0 --port 5000 --backend-store-uri sqlite:///mlflow.db --default-artifact-root mlflow-artifacts:/ --artifacts-destination /mlflow/artifacts --allowed-hosts "*" --serve-artifacts
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  app:
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile
+    container_name: summarization_app
+    ports:
+      - "8000:8000"
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - BENCHMARK_SAMPLE_SIZE=5
+      - TUNE_SAMPLE_SIZE=5
+      - TEST_SAMPLE_SIZE=2
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  prometheus:
+    image: prom/prometheus:v2.44.0
+    container_name: prometheus_server
+    ports:
+      - "9090:9090"
+    volumes:
+      - ../config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - app
+
+  grafana:
+    image: grafana/grafana:9.5.2
+    container_name: grafana_server
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ../config/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ../config/grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ../config/grafana/dashboard_summarization.json:/var/lib/grafana/dashboards/dashboard_summarization.json:ro
+    depends_on:
+      - prometheus
+
+volumes:
+  mlflow_data:

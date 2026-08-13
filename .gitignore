@@ -1,0 +1,29 @@
+# Virtual environment
+venv/
+.venv/
+Env/
+env/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local MLflow databases and artifacts
+mlruns/
+mlartifacts/
+mlflow.db
+mlflow.db-journal
+local_mlflow_model/
+
+# IDE files
+.vscode/
+.idea/
+.agents/
+*.log
