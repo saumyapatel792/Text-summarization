@@ -1,0 +1,42 @@
+To show the project to your faculty, you do NOT need to re-run the training or hyperparameter tuning scripts (which take a long time on CPU).
+
+Since all your experimental data is already saved in the local database, you only need to start the web servers (which takes 2 seconds).
+
+Here is the exact quick checklist of what to do on the day of your presentation:
+
+Step 1: Start the services (takes 2 seconds)
+Before your faculty arrives, open PowerShell in your docker/ folder and run:
+
+powershell
+docker compose up -d
+(This starts the UIs and the API. You do not need to run train.py or tune.py again).
+
+Step 2: What to Show Your Faculty (The Demo)
+Open these tabs in your browser to present:
+
+Tab 1: MLflow UI (Experiment Tracking)
+URL: http://localhost:5002
+What to show:
+Show them the list of 16 runs from your Optuna tuning.
+Select a few trials, click Compare, and scroll down to show the Parallel Coordinates Plot (which visually shows how different hyperparameters affected the ROUGE-L score).
+Go to the Models tab at the top and show them the registered TextSummarizerBest model.
+Tab 2: FastAPI Swagger Docs (Live API Demo)
+URL: http://localhost:8002/docs
+What to show:
+Click GET /health and execute it to show that the API is healthy and running the registered model TextSummarizerBest.
+Click POST /summarize, enter a sample paragraph, click Execute, and show them the live generated summary and response latency.
+Tab 3: Grafana Dashboard (Production Monitoring)
+URL: http://localhost:3002 (Login: admin / admin)
+What to show:
+Open the Text Summarization Service Performance dashboard.
+Show them the real-time monitoring charts showing target health (UP), total requests processed, average request latency, and token distributions.
+Tab 4: Exported CSV Report
+File: 
+
+mlflow_runs.csv
+What to show: Show them the exported spreadsheet containing the parameters and metrics of all experiment runs.
+Step 3: Stop the services when done
+After your presentation is complete, shut down the services to free up your computer's RAM:
+
+powershell
+docker compose down
