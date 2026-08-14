@@ -166,7 +166,7 @@ async def root():
 @app.get("/health", status_code=200)
 async def health_check():
     """
-    Health check endpoint for container orchestrators and Render.
+    Health check endpoint for container orchestrators.
     """
     if summarizer_pipeline is None:
         raise HTTPException(status_code=503, detail="Model is not initialized.")

@@ -1,4 +1,4 @@
-# Text Summarization Service (HF + Full Deployment Loop)
+# Text Summarization Service
 
 A production-grade text summarization API built with Hugging Face transformers (BART/T5), tuned with Optuna, monitored with Prometheus and Grafana, tracked with MLflow, and verified via ROUGE regression tests in CI/CD.
 
@@ -184,3 +184,5 @@ Access Grafana at `http://localhost:3000` (credentials: `admin`/`admin`).
 ### 4) Change Time Range / Refresh Rate
 * **Time Range**: In the top-right corner of the dashboard, click the clock icon dropdown. Select a pre-configured time window (e.g., `Last 5 minutes`, `Last 1 hour`, `Last 30 days`) or define a custom absolute range.
 * **Refresh Rate**: Next to the time range dropdown, click the refresh rate arrow/dropdown. Choose how frequently Grafana queries the backend Prometheus instance (e.g. `Off`, `5s`, `10s`, `1m`).
+
+

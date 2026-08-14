@@ -21,7 +21,7 @@ CANDIDATE_MODELS = [
 ]
 
 # Default best model to fall back on if registry is unavailable or for local default initialization
-DEFAULT_MODEL_NAME = "sshleifer/distilbart-cnn-6-6"
+DEFAULT_MODEL_NAME = os.getenv("DEFAULT_MODEL_NAME", "sshleifer/distilbart-cnn-6-6")
 
 # Generation Parameters Configuration
 DEFAULT_MIN_LENGTH = 30

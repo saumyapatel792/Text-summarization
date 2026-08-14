@@ -5,7 +5,7 @@ services:
     image: ghcr.io/mlflow/mlflow:latest
     container_name: mlflow_server
     ports:
-      - "5000:5000"
+      - "5002:5000"
     volumes:
       - C:/mlflow:/mlflow
     working_dir: /mlflow
@@ -22,7 +22,7 @@ services:
       dockerfile: docker/Dockerfile
     container_name: summarization_app
     ports:
-      - "8000:8000"
+      - "8002:8000"
     environment:
       - MLFLOW_TRACKING_URI=http://mlflow:5000
       - BENCHMARK_SAMPLE_SIZE=5
@@ -32,7 +32,7 @@ services:
       mlflow:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -41,7 +41,7 @@ services:
     image: prom/prometheus:v2.44.0
     container_name: prometheus_server
     ports:
-      - "9090:9090"
+      - "9092:9090"
     volumes:
       - ../config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     depends_on:
@@ -51,7 +51,7 @@ services:
     image: grafana/grafana:9.5.2
     container_name: grafana_server
     ports:
-      - "3000:3000"
+      - "3002:3000"
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
       - GF_USERS_ALLOW_SIGN_UP=false
