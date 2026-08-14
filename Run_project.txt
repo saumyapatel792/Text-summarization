@@ -40,3 +40,171 @@ After your presentation is complete, shut down the services to free up your comp
 
 powershell
 docker compose down
+
+
+
+------------------------------------------------ML Flow Tracking and experiment-------------------------------------------
+
+
+All 5 of these MLflow Tracking and Experimentation features are already fully implemented in your project and ready to be used or shown!
+
+Here is the step-by-step guide on how to show or use each of these 5 items in your running stack:
+
+Step 1: Open the MLflow UI
+First, make sure your Docker stack is running, and open the MLflow dashboard:
+
+URL: http://localhost:5002
+In the left panel, click on your experiment name: Text_Summarization_System.
+1) Compare Runs
+To compare different hyperparameter tuning runs side-by-side:
+
+In the runs table, check the checkboxes next to the runs you want to compare (e.g., trial_0, trial_1, trial_2).
+Click the Compare button at the top of the table.
+This opens a comparison page showing parameters (like num_beams and length_penalty) and performance metrics (like rougeL and avg_latency_sec) side-by-side.
+2) Filter Runs based on Hyperparameters / Metrics
+You can search and filter runs using the search bar above the table in the MLflow UI using SQL-like expressions:
+
+To find only trials with high ROUGE-L performance:
+sql
+metrics.rougeL > 0.15
+To search for a specific generation setting:
+sql
+params.num_beams >= 3
+Combine parameters & performance filters:
+sql
+params.num_beams >= 3 and metrics.avg_latency_sec < 10.0
+Click Search to filter the list.
+3) Visualize the Hyperparameter Effects
+Select your Optuna tuning run or check multiple nested trials and click Compare.
+Scroll down to the Visualizations section on the comparison page.
+Select Parallel Coordinates Plot:
+Add Parameters (num_beams, length_penalty) and Metrics (rougeL).
+This displays interactive lines mapping hyperparameter paths to performance.
+Select Scatter Plot:
+Set X-axis to length_penalty, Y-axis to rougeL to see how length penalty correlates with the score.
+4) Inspect the Saved (Best) Model
+Our tuning script (tune.py) automatically registers the best-performing model run in the MLflow Model Registry.
+
+In the top navigation bar of MLflow, click on the Models tab.
+Select TextSummarizerBest.
+Click on the latest version number (e.g., Version 1 or Version 2) to inspect:
+Source Run: The link to the exact Optuna trial that produced these weights.
+Schema: Expected input text schema and output format.
+Artifacts: Tokenizer config, model weights, and generation configuration JSON.
+5) Export Results as a CSV File
+We have a python utility script 
+
+mlflow_export.py
+ in the root of the project to do this automatically.
+
+To run it and generate the CSV file:
+
+Open PowerShell in your project folder.
+Run the script:
+powershell
+venv\Scripts\python mlflow_export.py
+This creates or updates the 
+
+mlflow_runs.csv
+ file in your project directory containing the parameters and metrics of all 16 runs. (We have already pushed this CSV to your GitHub repository!).
+
+
+------------------------------------Prometheus Query Language (PromQL)--------------------------------
+
+ These Prometheus Query Language (PromQL) features are already built-in and supported by your running Prometheus server!
+
+To execute and show these queries, open your Prometheus UI at http://localhost:9092 and enter the queries below in the Expression input box:
+
+1) Check Target Health
+To check if the FastAPI summarization application is actively connected:
+
+promql
+up{job="summarization_service"}
+Value = 1: The application is up and running healthy.
+Value = 0: The application is unreachable.
+2) Query a Rate of Change
+To calculate the average rate of requests per second received by the API over the last 5 minutes:
+
+promql
+rate(summarization_service_requests_total[5m])
+To calculate the rate of success vs error responses over 5 minutes:
+
+promql
+rate(summarization_service_requests_total{status="success"}[5m])
+3) Average Over Time
+To calculate the average input token length over the last 1 hour:
+
+promql
+avg_over_time(summarization_service_input_token_length_sum[1h]) / avg_over_time(summarization_service_input_token_length_count[1h])
+To calculate the average request latency (in seconds) over the last 30 minutes:
+
+promql
+rate(summarization_service_request_latency_seconds_sum[30m]) / rate(summarization_service_request_latency_seconds_count[30m])
+4) Compare Graph vs Table View
+Type any metric query (e.g. summarization_service_requests_total) in the expression input box.
+Click Execute.
+Toggle between:
+Table tab: Shows the current values at this exact second.
+Graph tab: Shows the visual timeline plotting metrics history over time.
+5) How many requests/runs in 5m / 1h / 24h / 30d
+Use the increase() function to calculate how many requests were processed within a specific timeframe:
+
+Number of runs in the last 5 minutes:
+promql
+increase(summarization_service_requests_total[5m])
+Number of runs in the last 1 hour:
+promql
+increase(summarization_service_requests_total[1h])
+Number of runs in the last day (24 hours):
+promql
+increase(summarization_service_requests_total[24h])
+Estimated number of runs in the last month (30 days):
+promql
+increase(summarization_service_requests_total[30d])
+
+
+
+-------------------------------------- Grafana operations ---------------------------------------
+
+All of these Grafana operations can be executed directly from your browser.
+
+Open Grafana at http://localhost:3002, open the Text Summarization Service Performance dashboard, and follow these steps for each task:
+
+1) Edit an Existing Panel
+To change the style, query, or title of any graph:
+
+Hover over the panel you want to edit (for example, "Average Request Latency").
+Click the three dots in the top-right corner of that panel and select Edit.
+In the editor screen:
+Query (Bottom Panel): You can change the PromQL expression.
+Panel Options (Right Sidebar): Change the graph style (e.g., from Bar to Time Series), colors, units, or the title.
+Click Apply in the top-right corner to save and update the dashboard.
+2) Create a New Panel
+To add a new graph (for example, to display p99 Latency):
+
+In the top-right dashboard menu, click the Add icon (the button with a plus sign) and select Visualization.
+Under the Query tab at the bottom, select your data source as Prometheus.
+In the query box, enter the PromQL expression for the 99th percentile of request latencies:
+promql
+histogram_quantile(0.99, sum(rate(summarization_service_request_latency_seconds_bucket[5m])) by (le))
+On the right sidebar under Panel options, set the title to p99 Latency (5m).
+Click Save (in the top-right corner) and then Apply.
+3) Set an Alert Threshold
+To trigger alerts when latency gets too high:
+
+Edit any panel (e.g., the new p99 latency panel) by clicking the three dots and choosing Edit.
+Click on the Alert tab (next to Query and Transform in the bottom editor panel).
+Click Create alert rule from this panel.
+Set the condition, for example:
+If latency IS ABOVE 5 (to alert if the model takes longer than 5 seconds).
+Configure the evaluation interval (e.g., evaluate every 1m).
+Click Save and exit in the top right to apply the alert.
+4) Change Time Range / Refresh Rate
+To change the time window of the graphs or set automatic page reloads:
+
+Change Time Range:
+In the top-right corner of the dashboard, click the clock dropdown (it might say "Last 1 hour" or "Last 5 minutes").
+Select your desired time window (e.g., "Last 15 minutes", "Last 24 hours", or a custom range).
+Change Refresh Rate:
+Next to the time range dropdown, click the refresh icon dropdown arrow.
+Select how often Grafana should query Prometheus for new data (e.g., "5s", "10s", or "1m"). This will update your charts in real-time as you send requests!
