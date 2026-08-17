@@ -97,6 +97,22 @@ The project integrates real-time system resource profiling during benchmarking, 
 * **`system_memory_usage_mb`**: Peak RAM memory footprint (Resident Set Size - RSS) of the process in MB.
 * **`system_memory_increment_mb`**: RAM increment during model loading to measure specific model weight overhead.
 
+* 1) Model Weight Overhead (RAM Increment):
+
+- BART vs. T5: The distilbart-cnn-6-6 model requires a massive ~1.2 GB to 1.3 GB of memory just to load its weights into RAM.
+- In comparison, the t5-small model is extremely lightweight, requiring only ~233 MB of memory increment.
+- google/flan-t5-small shows 0.0 MB increment because it was evaluated in a process that already had PyTorch/transformers memory warmed up and cache shared.
+
+* 2) Peak Memory Footprint (Peak RAM):
+
+- Despite the large difference in weight overhead, the peak memory usage across all runs hovers around 1.7 GB to 1.8 GB. This is because the execution environment loads general Python libraries, PyTorch CPU runtime libraries, and datasets, which form the base memory footprint.
+
+* 3) CPU Utilization & Latency:
+
+- Running BART (distilbart) is computationally heavier, consuming 20% - 24% CPU and taking ~11 seconds per summary on CPU.
+- Running t5-small uses less CPU (18%) and runs in 5.68 seconds (nearly twice as fast), making it more suitable for low-resource environments despite a trade-off in generation quality.
+
+
 ---
 
 ## 2. Prometheus Query Language (PromQL) Guide
