@@ -2,240 +2,327 @@ import os
 import time
 import logging
 import pandas as pd
+from typing import Dict, Any, Tuple
 import torch
 import mlflow
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
-from zenml import step, pipeline as zenml_pipeline
+import optuna
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline as hf_pipeline
 
+from zenml import step, pipeline
 from src.config import (
     MLFLOW_TRACKING_URI,
     MLFLOW_EXPERIMENT_NAME,
     MODEL_REGISTRY_NAME,
     DEFAULT_MODEL_NAME,
-    CANDIDATE_MODELS
+    DEFAULT_MIN_LENGTH,
+    DEFAULT_MAX_LENGTH,
+    BENCHMARK_SAMPLE_SIZE,
+    TUNE_SAMPLE_SIZE
 )
-from src.utils import load_data_sample, calculate_rouge_scores
+from src.utils import load_data_sample, calculate_rouge_scores, SystemMonitor
 
+# Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- STEP 1: Ingest ---
-@step
-def data_ingest_step() -> pd.DataFrame:
+@step(enable_cache=True)
+def ingest_data(split: str = "validation", sample_size: int = 10) -> pd.DataFrame:
     """
-    Ingests validation data from CNN/DailyMail dataset.
+    Ingest step: Loads a sample of the CNN/DailyMail dataset from HuggingFace.
     """
-    logger.info("Starting Data Ingestion Step...")
-    # Load a small sample size of 5 for demonstration purposes
-    df = load_data_sample(split="validation", sample_size=5)
+    logger.info(f"Ingesting dataset split: {split} (sample size: {sample_size})")
+    df = load_data_sample(split=split, sample_size=sample_size)
     return df
 
-# --- STEP 2: Validate ---
-@step
-def data_validate_step(df: pd.DataFrame) -> pd.DataFrame:
+@step(enable_cache=True)
+def validate_data(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Validates that the dataset schema is correct, no null values exist,
-    and columns are present. Halts pipeline on failure.
+    Validation step: Actively checks schema, null values, and class balance (document length representation).
+    Raises ValueError to halt the pipeline on failure.
     """
-    logger.info("Starting Data Validation Step...")
+    logger.info("Validating dataset schema, nulls, and length representations...")
     
-    # 1. Check if DataFrame is empty
-    if df.empty:
-        raise ValueError("Validation Failed: The dataset is empty!")
-        
-    # 2. Check schema (column existence)
+    # 1. Schema Validation
     required_columns = ["article", "highlights"]
     for col in required_columns:
         if col not in df.columns:
-            raise ValueError(f"Validation Failed: Missing required column '{col}'!")
+            raise ValueError(f"Schema Validation Failed: Missing required column '{col}'.")
             
-    # 3. Check for null values in required columns
+    # 2. Null/Empty Value Check
     null_counts = df[required_columns].isnull().sum()
-    for col, count in null_counts.items():
-        if count > 0:
-            raise ValueError(f"Validation Failed: Column '{col}' contains {count} null values!")
-            
-    logger.info("Data Validation Passed: Schema is correct and no null values found.")
-    return df
-
-# --- STEP 3: Transform ---
-@step
-def data_transform_step(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Transforms/prepares the text by truncating long inputs to avoid model constraints.
-    """
-    logger.info("Starting Data Transformation Step...")
-    df_transformed = df.copy()
-    
-    # Basic text cleaning: strip trailing/leading spaces and truncate to 4000 characters
-    df_transformed["article"] = df_transformed["article"].apply(lambda x: str(x).strip()[:4000])
-    df_transformed["highlights"] = df_transformed["highlights"].apply(lambda x: str(x).strip())
-    
-    logger.info("Data Transformation complete.")
-    return df_transformed
-
-# --- STEP 4: Train ---
-@step
-def model_train_step(df: pd.DataFrame) -> str:
-    """
-    Simulates training/benchmarking of candidate models on validation samples.
-    Logs metrics and parameters to MLflow. Returns the best model name.
-    """
-    logger.info("Starting Model Training/Benchmarking Step...")
-    
-    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
-    mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
-    
-    articles = df["article"].tolist()
-    references = df["highlights"].tolist()
-    
-    device = 0 if torch.cuda.is_available() else -1
-    best_model_name = DEFAULT_MODEL_NAME
-    best_rouge_l = -1.0
-    
-    # Benchmark the candidate models
-    for model_name in CANDIDATE_MODELS[:2]:  # Limit to first two for speed
-        logger.info(f"Benchmarking model: {model_name}")
+    if null_counts.sum() > 0:
+        raise ValueError(f"Null Validation Failed: Found null values in dataset: \n{null_counts}")
         
-        with mlflow.start_run(run_name=f"zenml_benchmark_{model_name.replace('/', '_')}"):
-            mlflow.log_param("model_name", model_name)
-            mlflow.log_param("dataset_size", len(articles))
+    empty_strings = ((df["article"].str.strip() == "") | (df["highlights"].str.strip() == "")).sum()
+    if empty_strings > 0:
+        raise ValueError(f"Empty Cell Validation Failed: Found {empty_strings} empty or whitespace-only text cells.")
+        
+    # 3. Class Balance / Text Length Bucket Representation Check
+    # We define 3 classes of articles based on character length: Short, Medium, Long.
+    # To pass, we want to make sure the dataset is not homogeneous (i.e. not all articles belong to a single length class),
+    # ensuring length variety.
+    def get_length_bucket(text: str) -> str:
+        length = len(text)
+        if length < 1000:
+            return "Short"
+        elif length < 3000:
+            return "Medium"
+        else:
+            return "Long"
             
-            try:
-                tokenizer = AutoTokenizer.from_pretrained(model_name)
-                model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
-                summarizer = pipeline(
-                    "summarization",
-                    model=model,
-                    tokenizer=tokenizer,
-                    device=device
+    df_copy = df.copy()
+    df_copy["length_bucket"] = df_copy["article"].apply(get_length_bucket)
+    bucket_counts = df_copy["length_bucket"].value_counts()
+    logger.info(f"Article length class counts: \n{bucket_counts}")
+    
+    # Gated representation check (only run if sample size is sufficient, e.g. >= 3)
+    if len(df) >= 3:
+        for bucket, count in bucket_counts.items():
+            proportion = count / len(df)
+            if proportion >= 1.0:
+                raise ValueError(
+                    f"Class Balance Validation Failed: 100% of data is in class '{bucket}'. "
+                    f"Pipeline halted to ensure representative length diversity."
                 )
                 
-                start_time = time.time()
-                predictions = []
-                for article in articles:
-                    summary = summarizer(
-                        article,
-                        max_length=142,
-                        min_length=30,
-                        do_sample=False
-                    )[0]['summary_text']
-                    predictions.append(summary)
-                    
-                elapsed_time = time.time() - start_time
-                avg_latency = elapsed_time / len(articles)
-                
-                scores = calculate_rouge_scores(predictions, references)
-                rouge_l = scores["rougeL"]
-                
-                mlflow.log_metric("avg_latency_sec", avg_latency)
-                mlflow.log_metric("rouge1", scores["rouge1"])
-                mlflow.log_metric("rouge2", scores["rouge2"])
-                mlflow.log_metric("rougeL", rouge_l)
-                
-                logger.info(f"Model: {model_name} | ROUGE-L: {rouge_l:.4f}")
-                
-                if rouge_l > best_rouge_l:
-                    best_rouge_l = rouge_l
-                    best_model_name = model_name
-                    
-            except Exception as e:
-                logger.error(f"Error benchmarking {model_name}: {e}")
-                mlflow.log_param("status", "failed")
-                
-    logger.info(f"Training/benchmarking complete. Best model: {best_model_name}")
-    return best_model_name
+    logger.info("Data Validation Passed successfully.")
+    return df
 
-# --- STEP 5: Evaluate ---
-@step
-def model_evaluate_step(df: pd.DataFrame, best_model_name: str) -> dict:
+@step(enable_cache=True)
+def transform_data(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Performs a final evaluation on the best model, outputting a dictionary of scores.
+    Transformation step: Trims whitespaces and limits article size to prevent model token overflow.
     """
-    logger.info(f"Starting Final Model Evaluation Step for model: {best_model_name}")
+    logger.info("Transforming text inputs...")
+    df_transformed = df.copy()
+    
+    # Strip whitespaces
+    df_transformed["article"] = df_transformed["article"].str.strip()
+    df_transformed["highlights"] = df_transformed["highlights"].str.strip()
+    
+    # Truncate text strictly to prevent token overflow on default models (max 4000 characters)
+    df_transformed["article"] = df_transformed["article"].apply(lambda x: x[:4000])
+    
+    logger.info("Transformation complete.")
+    return df_transformed
+
+@step(enable_cache=False) # Disable cache for train to allow trial executions
+def train_model(df: pd.DataFrame, model_name: str = DEFAULT_MODEL_NAME, n_trials: int = 2) -> Dict[str, Any]:
+    """
+    Train step: Runs hyperparameter tuning using Optuna to select the best num_beams and length_penalty.
+    """
+    logger.info(f"Tuning generation parameters for model: {model_name} (trials: {n_trials})")
     
     articles = df["article"].tolist()
     references = df["highlights"].tolist()
-    device = 0 if torch.cuda.is_available() else -1
     
-    tokenizer = AutoTokenizer.from_pretrained(best_model_name)
-    model = AutoModelForSeq2SeqLM.from_pretrained(best_model_name)
-    summarizer = pipeline(
+    device = 0 if torch.cuda.is_available() else -1
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+    summarizer = hf_pipeline(
         "summarization",
         model=model,
         tokenizer=tokenizer,
         device=device
     )
     
+    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+    mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
+    
+    def objective(trial):
+        num_beams = trial.suggest_int("num_beams", 1, 4)
+        length_penalty = trial.suggest_float("length_penalty", 0.5, 2.5)
+        
+        with mlflow.start_run(run_name=f"zenml_trial_{trial.number}", nested=True):
+            mlflow.log_params({
+                "num_beams": num_beams,
+                "length_penalty": length_penalty,
+                "trial_number": trial.number,
+                "orchestrator": "zenml"
+            })
+            
+            # Start resource monitoring
+            monitor = SystemMonitor()
+            monitor.start()
+            
+            predictions = []
+            for article in articles:
+                summary = summarizer(
+                    article,
+                    max_length=DEFAULT_MAX_LENGTH,
+                    min_length=DEFAULT_MIN_LENGTH,
+                    num_beams=num_beams,
+                    length_penalty=length_penalty,
+                    do_sample=False
+                )[0]["summary_text"]
+                predictions.append(summary)
+                monitor.sample() # Sample after each inference iteration
+                
+            # Stop monitoring and collect metrics
+            sys_metrics = monitor.stop()
+            
+            scores = calculate_rouge_scores(predictions, references)
+            mlflow.log_metric("rougeL", scores["rougeL"])
+            mlflow.log_metrics(sys_metrics)
+            return scores["rougeL"]
+            
+    with mlflow.start_run(run_name=f"zenml_tuning_{model_name.replace('/', '_')}"):
+        mlflow.log_params({
+            "model_name": model_name,
+            "tuning_samples": len(articles),
+            "n_trials": n_trials,
+            "orchestrator": "zenml"
+        })
+        
+        study = optuna.create_study(direction="maximize")
+        study.optimize(objective, n_trials=n_trials)
+        
+        logger.info(f"Best trial parameters: {study.best_params}")
+        logger.info(f"Best ROUGE-L: {study.best_value:.4f}")
+        
+        mlflow.log_params({f"best_{k}": v for k, v in study.best_params.items()})
+        mlflow.log_metric("best_rougeL", study.best_value)
+        
+        return {
+            "model_name": model_name,
+            "best_params": study.best_params,
+            "best_rougeL": study.best_value
+        }
+
+@step(enable_cache=True)
+def evaluate_model(train_result: Dict[str, Any], df: pd.DataFrame) -> Dict[str, float]:
+    """
+    Evaluation step: Evaluates the chosen model with the best parameters and computes metrics.
+    """
+    model_name = train_result["model_name"]
+    best_params = train_result["best_params"]
+    
+    logger.info(f"Evaluating {model_name} with parameters {best_params}...")
+    
+    articles = df["article"].tolist()
+    references = df["highlights"].tolist()
+    
+    # Start resource monitoring
+    monitor = SystemMonitor()
+    monitor.start()
+    
+    device = 0 if torch.cuda.is_available() else -1
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+    monitor.sample() # Sample after loading model in memory
+    
+    summarizer = hf_pipeline(
+        "summarization",
+        model=model,
+        tokenizer=tokenizer,
+        device=device
+    )
+    monitor.sample() # Sample after pipeline initialization
+    
+    start_time = time.time()
     predictions = []
     for article in articles:
         summary = summarizer(
             article,
-            max_length=142,
-            min_length=30,
+            max_length=DEFAULT_MAX_LENGTH,
+            min_length=DEFAULT_MIN_LENGTH,
+            num_beams=best_params.get("num_beams", 4),
+            length_penalty=best_params.get("length_penalty", 1.0),
             do_sample=False
-        )[0]['summary_text']
+        )[0]["summary_text"]
         predictions.append(summary)
+        monitor.sample() # Sample after each inference iteration
         
+    elapsed_time = time.time() - start_time
+    avg_latency = elapsed_time / len(articles)
+    
+    # Stop monitoring and collect metrics
+    sys_metrics = monitor.stop()
+    
     scores = calculate_rouge_scores(predictions, references)
-    logger.info(f"Final Evaluation Scores: {scores}")
-    return scores
+    logger.info(f"Evaluation scores: {scores} | Avg Latency: {avg_latency:.2f}s")
+    
+    res = {
+        "rouge1": scores["rouge1"],
+        "rouge2": scores["rouge2"],
+        "rougeL": scores["rougeL"],
+        "avg_latency_sec": avg_latency
+    }
+    res.update(sys_metrics)
+    return res
 
-# --- STEP 6: Deploy / Register ---
-@step
-def model_deploy_step(best_model_name: str) -> None:
+@step(enable_cache=False)
+def deploy_model(train_result: Dict[str, Any], eval_metrics: Dict[str, float]) -> bool:
     """
-    Registers the best model in the MLflow Model Registry.
+    Deploy step: Registers the best model in the MLflow Model Registry if threshold is met.
     """
-    logger.info(f"Starting Model Registry/Deployment Step for model: {best_model_name}")
+    model_name = train_result["model_name"]
+    best_params = train_result["best_params"]
+    rouge_l = eval_metrics["rougeL"]
     
-    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
-    mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
+    threshold = 0.12
+    logger.info(f"Deploy check: ROUGE-L score is {rouge_l:.4f} (Threshold: {threshold})")
     
-    tokenizer = AutoTokenizer.from_pretrained(best_model_name)
-    model = AutoModelForSeq2SeqLM.from_pretrained(best_model_name)
-    
-    with mlflow.start_run(run_name="zenml_deploy") as run:
+    if rouge_l >= threshold:
+        logger.info("Performance threshold met. Registering model in MLflow registry...")
+        
+        mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+        mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
+        
+        # Load and register model
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
         components = {
             "model": model,
-            "tokenizer": tokenizer,
+            "tokenizer": tokenizer
         }
-        # Log and register best model in model registry
-        mlflow.transformers.log_model(
-            transformers_model=components,
-            artifact_path="best_model",
-            task="summarization",
-            registered_model_name=MODEL_REGISTRY_NAME,
-            model_config={
-                "num_beams": 4,
-                "length_penalty": 2.0,
-                "max_length": 142,
-                "min_length": 30,
-                "do_sample": False
-            }
-        )
-    logger.info(f"Successfully registered model '{best_model_name}' under registry name '{MODEL_REGISTRY_NAME}'")
+        
+        with mlflow.start_run(run_name="zenml_deploy"):
+            mlflow.log_params(best_params)
+            mlflow.log_metrics(eval_metrics)
+            
+            mlflow.transformers.log_model(
+                transformers_model=components,
+                artifact_path="best_model",
+                task="summarization",
+                registered_model_name=MODEL_REGISTRY_NAME,
+                model_config={
+                    "num_beams": best_params.get("num_beams", 4),
+                    "length_penalty": best_params.get("length_penalty", 1.0),
+                    "max_length": DEFAULT_MAX_LENGTH,
+                    "min_length": DEFAULT_MIN_LENGTH,
+                    "do_sample": False
+                }
+            )
+            
+        logger.info(f"Model successfully registered in MLflow Model Registry as '{MODEL_REGISTRY_NAME}'")
+        return True
+    else:
+        logger.warning("Performance threshold not met. Model deployment skipped.")
+        return False
 
-
-# --- ZENML PIPELINE DEFINITION ---
-@zenml_pipeline
+@pipeline
 def text_summarization_pipeline():
     """
-    Full ZenML orchestration pipeline:
-    ingest -> validate -> transform -> train -> evaluate -> deploy
+    ZenML Pipeline orchestrating the full ML lifecycle.
     """
-    data = data_ingest_step()
-    validated_data = data_validate_step(df=data)
-    transformed_data = data_transform_step(df=validated_data)
-    best_model = model_train_step(df=transformed_data)
-    evaluation_metrics = model_evaluate_step(df=transformed_data, best_model_name=best_model)
-    model_deploy_step(best_model_name=best_model)
-
+    # 1. Ingest
+    df_raw = ingest_data(sample_size=BENCHMARK_SAMPLE_SIZE)
+    # 2. Validate
+    df_valid = validate_data(df=df_raw)
+    # 3. Transform
+    df_trans = transform_data(df=df_valid)
+    # 4. Train (Tuning)
+    train_res = train_model(df=df_trans)
+    # 5. Evaluate
+    eval_metrics = evaluate_model(train_result=train_res, df=df_trans)
+    # 6. Deploy
+    deploy_model(train_result=train_res, eval_metrics=eval_metrics)
 
 if __name__ == "__main__":
-    # Ensure ZenML uses local tracking
-    os.environ["ZENML_DEBUG"] = "true"
-    os.environ["PYTHONIOENCODING"] = "utf-8"
+    logger.info("Initializing and running the ZenML pipeline...")
     
-    # Run the pipeline
+    # Execute the pipeline
     text_summarization_pipeline()
+    
+    logger.info("ZenML pipeline execution finished successfully.")

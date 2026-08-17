@@ -3,7 +3,39 @@ from rouge_score import rouge_scorer
 import pandas as pd
 from typing import List, Dict
 import logging
+import psutil
 from src.config import DATASET_NAME, DATASET_VERSION
+
+class SystemMonitor:
+    def __init__(self):
+        self.process = psutil.Process()
+        self.start_mem = 0.0
+        self.cpu_samples = []
+        self.mem_samples = []
+        
+    def start(self):
+        # Call cpu_percent once to initialize the benchmark window
+        psutil.cpu_percent(interval=None)
+        self.start_mem = self.process.memory_info().rss / (1024 * 1024) # MB
+        self.cpu_samples = []
+        self.mem_samples = []
+        self.sample()
+        
+    def sample(self):
+        self.cpu_samples.append(psutil.cpu_percent(interval=None))
+        self.mem_samples.append(self.process.memory_info().rss / (1024 * 1024)) # MB
+        
+    def stop(self) -> Dict[str, float]:
+        self.sample()
+        avg_cpu = sum(self.cpu_samples) / len(self.cpu_samples) if self.cpu_samples else 0.0
+        peak_mem = max(self.mem_samples) if self.mem_samples else 0.0
+        mem_increment = peak_mem - self.start_mem
+        return {
+            "system_cpu_utilization_percent": avg_cpu,
+            "system_memory_usage_mb": peak_mem,
+            "system_memory_increment_mb": mem_increment
+        }
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

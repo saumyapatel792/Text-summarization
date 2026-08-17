@@ -8,7 +8,7 @@ from src.config import (
     CANDIDATE_MODELS,
     BENCHMARK_SAMPLE_SIZE
 )
-from src.utils import load_data_sample, calculate_rouge_scores
+from src.utils import load_data_sample, calculate_rouge_scores, SystemMonitor
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -40,10 +40,15 @@ def benchmark_models():
             mlflow.log_param("dataset_size", len(articles))
             mlflow.log_param("device", "cuda" if device == 0 else "cpu")
             
+            # Start resource monitoring
+            monitor = SystemMonitor()
+            monitor.start()
+            
             try:
                 # Load tokenizer and model
                 tokenizer = AutoTokenizer.from_pretrained(model_name)
                 model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+                monitor.sample() # Sample after loading model in memory
                 
                 # Setup Pipeline
                 summarizer = pipeline(
@@ -52,6 +57,7 @@ def benchmark_models():
                     tokenizer=tokenizer,
                     device=device
                 )
+                monitor.sample() # Sample after pipeline initialization
                 
                 # Perform inference and time it
                 start_time = time.time()
@@ -70,9 +76,13 @@ def benchmark_models():
                         logger.error(f"Inference failed for article: {e}")
                         summary = ""
                     predictions.append(summary)
+                    monitor.sample() # Sample after each inference iteration
                 
                 elapsed_time = time.time() - start_time
                 avg_latency = elapsed_time / len(articles)
+                
+                # Stop monitoring and collect metrics
+                sys_metrics = monitor.stop()
                 
                 # Compute ROUGE scores
                 scores = calculate_rouge_scores(predictions, references)
@@ -82,6 +92,10 @@ def benchmark_models():
                 mlflow.log_metric("rouge1", scores['rouge1'])
                 mlflow.log_metric("rouge2", scores['rouge2'])
                 mlflow.log_metric("rougeL", scores['rougeL'])
+                
+                # Log system metrics
+                mlflow.log_metrics(sys_metrics)
+
                 
                 # Log Model artifact using mlflow.transformers
                 components = {

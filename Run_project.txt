@@ -2,7 +2,30 @@ To show the project to your faculty, you do NOT need to re-run the training or h
 
 Since all your experimental data is already saved in the local database, you only need to start the web servers (which takes 2 seconds).
 
+---------------------------------------- ZenML Pipeline Orchestration -----------------------------------
+
+We have implemented a production-grade ZenML pipeline that orchestrates the entire ML lifecycle:
+Ingest -> Validate -> Transform -> Train -> Evaluate -> Deploy.
+
+To execute the ZenML pipeline locally:
+1. Ensure your virtual environment is active.
+2. Spin up the MLflow tracking server locally if it isn't running:
+   powershell
+   venv\Scripts\mlflow server --host 127.0.0.1 --port 5000 --backend-store-uri sqlite:///mlflow.db --default-artifact-root ./mlruns
+3. Run the pipeline:
+   powershell
+   $env:BENCHMARK_SAMPLE_SIZE="3"; $env:TUNE_SAMPLE_SIZE="2"; $env:PYTHONPATH="."; $env:MLFLOW_TRACKING_URI="http://127.0.0.1:5000"; $env:PYTHONIOENCODING="utf-8"; venv\Scripts\python src/zenml_pipeline.py
+
+To view/inspect the ZenML pipeline visually:
+1. Spin up the ZenML dashboard server:
+   powershell
+   venv\Scripts\zenml login --local
+2. Click the dashboard link in your browser to view the runs history, caching, DAG visualizer, and artifact details.
+
+---------------------------------------------------------------------------------------------------------
+
 Here is the exact quick checklist of what to do on the day of your presentation:
+
 
 Step 1: Start the services (takes 2 seconds)
 Before your faculty arrives, open PowerShell in your docker/ folder and run:
@@ -208,3 +231,40 @@ Select your desired time window (e.g., "Last 15 minutes", "Last 24 hours", or a 
 Change Refresh Rate:
 Next to the time range dropdown, click the refresh icon dropdown arrow.
 Select how often Grafana should query Prometheus for new data (e.g., "5s", "10s", or "1m"). This will update your charts in real-time as you send requests!
+
+
+
+
+
+
+
+
+--------------------------------------------------------------------------------------
+
+{
+  "text": "The movie was visually stunning with excellent performances from the lead actors. The storyline was engaging, but the pacing was slow in some parts. Overall, it was an enjoyable experience for audiences who like emotional dramas.",
+  "num_beams": 4,
+  "length_penalty": 2
+}
+
+
+{
+  "text": "The government announced a new renewable energy policy aimed at reducing carbon emissions. The initiative includes investments in solar and wind power projects and encourages industries to adopt cleaner technologies.",
+  "num_beams": 5,
+  "length_penalty": 1.5
+}
+
+
+{
+  "text": "Artificial intelligence is transforming industries by automating repetitive tasks and improving decision-making processes. Companies are increasingly adopting machine learning solutions to enhance productivity and customer experience.",
+  "num_beams": 3,
+  "length_penalty": 1
+}
+
+
+{
+  "text": "Machine learning is a branch of artificial intelligence that enables computers to learn from data without being explicitly programmed. It is widely used in healthcare, finance, transportation, and many other fields. Modern deep learning techniques have improved the accuracy of prediction systems significantly.",
+  "num_beams": 6,
+  "length_penalty": 2
+}
+

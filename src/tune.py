@@ -11,7 +11,7 @@ from src.config import (
     TUNE_SAMPLE_SIZE,
     DEFAULT_MODEL_NAME
 )
-from src.utils import load_data_sample, calculate_rouge_scores
+from src.utils import load_data_sample, calculate_rouge_scores, SystemMonitor
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -21,12 +21,6 @@ def objective(trial, model_name, articles, references, device):
     num_beams = trial.suggest_int("num_beams", 1, 6)
     length_penalty = trial.suggest_float("length_penalty", 0.5, 2.5)
     
-    # Load model and tokenizer
-    # We load them inside the trial or once outside. Loading outside is faster.
-    # To do that, we can pass model and tokenizer directly or load once.
-    # Let's pass the pipeline directly but update generation parameters at inference time.
-    # Fortunately, the Hugging Face pipeline's __call__ accepts generation parameters as kwargs.
-    
     # Start nested MLflow run for each trial
     with mlflow.start_run(run_name=f"trial_{trial.number}", nested=True):
         mlflow.log_params({
@@ -35,10 +29,10 @@ def objective(trial, model_name, articles, references, device):
             "trial_number": trial.number
         })
         
-        # Load model and tokenizer inside trial (or load once outside and pass to objective)
-        # Loading inside ensures each trial is fully isolated, but it can be slow.
-        # Let's use a global pipeline cached for the objective, or initialize once.
-        # We will use the pipeline created in the parent scope.
+        # Start resource monitoring
+        monitor = SystemMonitor()
+        monitor.start()
+        
         try:
             predictions = []
             for article in articles:
@@ -52,7 +46,11 @@ def objective(trial, model_name, articles, references, device):
                     do_sample=False
                 )[0]['summary_text']
                 predictions.append(summary)
+                monitor.sample() # Sample after each inference iteration
                 
+            # Stop monitoring and collect metrics
+            sys_metrics = monitor.stop()
+            
             scores = calculate_rouge_scores(predictions, references)
             score = scores['rougeL']
             
@@ -61,7 +59,11 @@ def objective(trial, model_name, articles, references, device):
             mlflow.log_metric("rouge2", scores['rouge2'])
             mlflow.log_metric("rougeL", score)
             
+            # Log system metrics
+            mlflow.log_metrics(sys_metrics)
+            
             return score
+
         except Exception as e:
             logger.error(f"Trial {trial.number} failed: {e}")
             mlflow.log_param("status", "failed")

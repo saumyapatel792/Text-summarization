@@ -50,7 +50,7 @@ Once MLflow is running (either locally or via Docker), navigate to `http://local
 1. In the left panel, select the experiment: **`Text_Summarization_System`**.
 2. Tick the checkboxes next to the runs (e.g. the model benchmarks or Optuna trials) you want to compare.
 3. Click the **Compare** button at the top of the table.
-4. This opens the comparison page showing side-by-side parameters (e.g., `model_name`, `num_beams`, `length_penalty`) and metrics (`rougeL`, `avg_latency_sec`).
+4. This opens the comparison page showing side-by-side parameters (e.g., `model_name`, `num_beams`, `length_penalty`) and metrics (e.g., `rougeL`, `avg_latency_sec`, `system_cpu_utilization_percent`, `system_memory_usage_mb`, `system_memory_increment_mb`).
 
 ### 2) Filter Runs
 In the search bar above the runs list, write SQL-like queries to filter runs:
@@ -90,6 +90,12 @@ Run the provided exporter utility to generate `mlflow_runs.csv`:
 python mlflow_export.py
 ```
 This queries the MLflow client and outputs a structured CSV for offline Excel/Pandas analysis.
+
+### 6) System Resource Utilization Tracking
+The project integrates real-time system resource profiling during benchmarking, hyperparameter tuning, and ZenML steps using `psutil`. For each run, MLflow tracks and displays:
+* **`system_cpu_utilization_percent`**: Average CPU utilization percentage over the execution lifecycle.
+* **`system_memory_usage_mb`**: Peak RAM memory footprint (Resident Set Size - RSS) of the process in MB.
+* **`system_memory_increment_mb`**: RAM increment during model loading to measure specific model weight overhead.
 
 ---
 
