@@ -2,6 +2,8 @@
 
 A production-grade text summarization API built with Hugging Face transformers (BART/T5), tuned with Optuna, monitored with Prometheus and Grafana, tracked with MLflow, and verified via ROUGE regression tests in CI/CD.
 
+Dataset : https://huggingface.co/datasets/abisee/cnn_dailymail
+
 ---
 
 ## Quick Start (Local Setup)
