@@ -1,0 +1,52 @@
+services:
+  # 1. FastAPI Application Service
+  - type: web
+    name: summarization-app
+    runtime: docker
+    dockerfilePath: docker/Dockerfile
+    dockerContext: .
+    plan: free
+    envVars:
+      - key: PORT
+        value: "8000"
+      - key: DEFAULT_MODEL_NAME
+        value: "t5-small" # Prevents Out-Of-Memory crashes on Render Free Tier (512MB RAM)
+      - key: MLFLOW_TRACKING_URI
+        value: "http://mlflow-server:5000"
+
+  # 2. MLflow Tracking Server (Private Service)
+  - type: pserv
+    name: mlflow-server
+    runtime: docker
+    dockerfilePath: docker/mlflow.Dockerfile
+    dockerContext: .
+    plan: free
+    envVars:
+      - key: PORT
+        value: "5000"
+
+  # 3. Prometheus Server (Private Service)
+  - type: pserv
+    name: prometheus-server
+    runtime: docker
+    dockerfilePath: docker/prometheus.Dockerfile
+    dockerContext: .
+    plan: free
+    envVars:
+      - key: PORT
+        value: "9090"
+
+  # 4. Grafana Server (Public Web Service)
+  - type: web
+    name: grafana-server
+    runtime: docker
+    dockerfilePath: docker/grafana.Dockerfile
+    dockerContext: .
+    plan: free
+    envVars:
+      - key: PORT
+        value: "3000"
+      - key: GF_SECURITY_ADMIN_PASSWORD
+        value: "admin"
+      - key: GF_USERS_ALLOW_SIGN_UP
+        value: "false"

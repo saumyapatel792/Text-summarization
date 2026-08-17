@@ -124,8 +124,10 @@ async def lifespan(app: FastAPI):
     if not loaded_from_registry:
         try:
             logger.info(f"Loading fallback default model '{DEFAULT_MODEL_NAME}' from Hugging Face...")
+            import gc
+            gc.collect()
             model_tokenizer = AutoTokenizer.from_pretrained(DEFAULT_MODEL_NAME)
-            model = AutoModelForSeq2SeqLM.from_pretrained(DEFAULT_MODEL_NAME)
+            model = AutoModelForSeq2SeqLM.from_pretrained(DEFAULT_MODEL_NAME, low_cpu_mem_usage=True)
             summarizer_pipeline = pipeline(
                 "summarization",
                 model=model,
